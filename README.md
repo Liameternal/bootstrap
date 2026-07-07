@@ -66,8 +66,8 @@
 
 ## 使用注意
 
-- 不要使用 `sudo ./bootstrap-linux.sh`。普通用户直接运行即可，脚本会在需要系统权限时自动使用 `sudo`。
-- root 用户可以直接运行脚本，配置会安装到 `/root`。
+- 不要使用 `sudo ./bootstrap-linux.sh` 或 `sudo bash bootstrap-linux.sh` 直接调用脚本。普通用户直接运行即可，脚本会在需要系统权限时自动使用 `sudo`。
+- root 用户可以在 root 登录 shell 中直接运行脚本，配置会安装到 `/root`；例如先执行 `sudo -i` 或 `su -`，再进入项目目录运行 `bash bootstrap-linux.sh`。
 - 日志默认写到脚本所在目录的 `bootstrap-linux.log`，也可以用 `--log-file` 覆盖。
 - 脚本默认读取同目录的 `bootstrap.conf`；如果默认配置文件不存在，会按 `PROFILE=minimal` 的内置默认值运行。
 - `PROFILE=advanced` 且某个 `INSTALL_*` 没有写在配置文件中时，该组件默认启用。

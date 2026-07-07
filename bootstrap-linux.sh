@@ -39,8 +39,8 @@ set -euo pipefail
 #   ./bootstrap-linux.sh --config ./bootstrap.conf -v
 #
 # 注意：
-#   不要使用 sudo ./bootstrap-linux.sh。普通用户运行时，脚本只会对系统级命令
-#   自动使用 sudo；root 用户可以直接运行，配置会安装到 /root。
+#   不要使用 sudo 直接调用本脚本。普通用户运行时，脚本只会对系统级命令
+#   自动使用 sudo；root 登录 shell 可以直接运行，配置会安装到 /root。
 
 REPO_URL_DEFAULT="https://github.com/Liameternal/myconfig.git"
 
@@ -72,9 +72,10 @@ Config:
   PROFILE=advanced    Run basic setup plus enabled advanced components
 
 Notes:
-  Do not run this script with sudo.
+  Do not run this script with sudo directly.
   Normal users should run it directly; system commands will use sudo as needed.
-  Root may run it directly to install configuration under /root.
+  Root may run it from a root login shell, for example after sudo -i or su -,
+  to install configuration under /root.
 
 EOF
 }
@@ -137,12 +138,14 @@ resolve_home_for_user() {
   printf '%s' "$home"
 }
 
-# 支持普通用户直接运行，或 root 用户自身直接运行。
-# 禁止 sudo ./bootstrap-linux.sh，避免 TARGET_HOME/HOME 和配置文件属主混乱。
+# 支持普通用户直接运行，或 root 登录 shell 直接运行。
+# 禁止 sudo 直接调用脚本，避免 TARGET_HOME/HOME 和配置文件属主混乱。
+# 允许 sudo -i / su - 后在 root shell 中运行，用于初始化 /root。
 # 这里不写日志，因为 log() 还未定义，避免脚本启动阶段出现函数顺序问题。
 if [ "$(id -u)" -eq 0 ]; then
-  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    echo "[bootstrap-linux] Do not run this script with sudo. Use ./bootstrap-linux.sh as your normal user, or run it directly from a root shell." >&2
+  script_name="$(basename "${BASH_SOURCE[0]}")"
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ] && [[ "${SUDO_COMMAND:-}" == *"$script_name"* ]]; then
+    echo "[bootstrap-linux] Do not run this script with sudo directly. Use ./bootstrap-linux.sh as your normal user, or enter a root shell with sudo -i / su - and run it there." >&2
     exit 1
   fi
   TARGET_USER="root"
@@ -974,7 +977,7 @@ install_kind() {
   if command -v go >/dev/null 2>&1; then
     run_user "go install sigs.k8s.io/kind@latest" || return 1
     if id -u "$TARGET_USER" >/dev/null 2>&1; then
-      run_user "grep -qxF 'export PATH=\$PATH:\$HOME/go/bin' '$TARGET_HOME/.zshrc' || echo 'export PATH=\$PATH:\$HOME/go/bin' >> '$TARGET_HOME/.zshrc'"
+      run_user "grep -qxF 'export PATH=\$PATH:\$HOME/go/bin' '$TARGET_HOME/.zshrc' || sed -i -E '/^[[:space:]]*source[[:space:]]+\$ZSH\/oh-my-zsh\.sh[[:space:]]*$/i export PATH=\$PATH:\$HOME/go/bin' '$TARGET_HOME/.zshrc'"
     fi
   else
     kind_ver="$(curl -L -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep '\"tag_name\":' | sed -E 's/.*\"([^\"]+)\".*/\1/')"
