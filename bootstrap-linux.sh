@@ -666,6 +666,7 @@ install_oh_my_zsh_plugins() {
     "zsh-autosuggestions|https://github.com/zsh-users/zsh-autosuggestions"
     "zsh-syntax-highlighting|https://github.com/zsh-users/zsh-syntax-highlighting"
     "zsh-history-substring-search|https://github.com/zsh-users/zsh-history-substring-search"
+    "conda-zsh-completion|https://github.com/conda-incubator/conda-zsh-completion"
   )
 
   if [ "$DRY_RUN" = false ]; then
