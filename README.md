@@ -51,18 +51,38 @@
 - 检测发行版和包管理器。
 - 安装基础工具，例如 `git`、`curl`、`wget`、`zsh`、`tmux`、`vim`、`fzf`、`ripgrep`。
 - 安装 oh-my-zsh 和常用插件。
+- 通过系统包管理器安装可选的 Pygments 插件依赖，不安装 pip，也不使用 pip 兜底。
 - 同步 `myconfig` 仓库。
 - 复制 `.zshrc`、`.vimrc`、`.tmux.conf`，并同步 Vim `ftdetect` 目录。
 - 安装 Vundle 和 tmux plugin manager。
 
 `advanced` 会在 `minimal` 之后先安装开发和排障工具，再按配置安装高级组件：
 
-- development tools：例如 `p7zip`、`procps-ng`、`sysstat`、`iproute`、`perf`、`tcpdump`、`strace`、`bpftrace`、`gdb`、`shellcheck`、`helm`、`sshpass`、`golang`
+- 开发和排障工具：例如 `p7zip`、`procps-ng`、`sysstat`、`iproute`、`perf`、`tcpdump`、`strace`、`bpftrace`、`gdb`、`shellcheck`、`iscsi-initiator-utils`、`unrar`、`net-snmp-utils`、`helm`、`sshpass`、`golang`。这些名称经过 `pkg_name()` 映射后安装，不受 `INSTALL_*` 开关控制。
 - Miniconda
 - Docker
 - kubectl
 - kind
 - Open vSwitch
+
+## 包名映射与组件依赖
+
+包名差异集中由 `pkg_name()` 处理。Arch/CachyOS 使用以下映射：
+
+| 安装列表名称 | pacman 包名 |
+| --- | --- |
+| `python3-pygments` | `python-pygments` |
+| `net-snmp-utils` | `net-snmp` |
+| `iscsi-initiator-utils` | `open-iscsi` |
+| `golang` | `go` |
+| `iproute` | `iproute2` |
+| `p7zip` | `7zip` |
+
+Pygments 在 apt、dnf、yum、zypper 下使用 `python3-pygments`；安装失败会记录日志并继续。其 Python 依赖由系统包管理器解析，脚本本身不调用 pip。
+
+Arch/CachyOS 的 Open vSwitch 使用 `ovs-vswitchd.service`，该单元会启动 `ovsdb-server.service`；其他已支持路径使用 `openvswitch.service`。OVS 包安装失败时跳过服务启动。
+
+kind 优先使用 Go 安装，没有 Go 时通过 curl 下载二进制。创建集群还需要容器运行时；关闭 `INSTALL_DOCKER` 时需自行准备可用运行时。kubectl 的二进制下载依赖 curl。Miniconda、kubectl 和 kind 的下载地址目前默认面向 Linux x86_64，其他架构需要另行适配。
 
 ## 使用注意
 
@@ -71,6 +91,9 @@
 - 日志默认写到脚本所在目录的 `bootstrap-linux.log`，也可以用 `--log-file` 覆盖。
 - 脚本默认读取同目录的 `bootstrap.conf`；如果默认配置文件不存在，会按 `PROFILE=minimal` 的内置默认值运行。
 - `PROFILE=advanced` 且某个 `INSTALL_*` 没有写在配置文件中时，该组件默认启用。
+- Arch/CachyOS 在安装前执行一次 `pacman -Syu --noconfirm` 升级阶段；成功后，所有软件包安装使用 `pacman -S --needed --noconfirm`，不再重复同步仓库数据库。升级失败时中止后续安装，`--dry-run` 只打印命令。
+
+包名和服务依据：[Arch 包仓库](https://archlinux.org/packages/)、[Open vSwitch](https://wiki.archlinux.org/title/Open_vSwitch)。跨发行版安装仍取决于目标系统版本和已启用的仓库，可选工具缺包时会记录日志并继续。
 
 ## 后续手动步骤
 

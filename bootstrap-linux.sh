@@ -26,7 +26,7 @@ set -euo pipefail
 #   minimal  - 基础安装。包含包管理器检测、基础工具、oh-my-zsh、远程 myconfig
 #              仓库同步、.zshrc/.vimrc/.tmux.conf 复制、Vundle/tpm 安装。
 #   advanced - 先执行 minimal，再按配置开关安装 Miniconda、Docker、kubectl、
-#              kind、Open vSwitch。
+#              kind、Open vSwitch；开发和排障工具不受组件开关控制。
 #
 # 配置文件：
 #   默认读取脚本同目录的 bootstrap.conf，也可以通过 --config PATH 指定。
@@ -391,6 +391,13 @@ detect_distro_and_pkgmgr() {
   log "Detected distro: $DISTRO ($PRETTY_NAME), version: $VERSION_ID, package manager: $PKG_MANAGER"
 }
 
+# 在 pacman 系统上同步仓库并升级系统。
+# 何时执行：检测包管理器后、任何软件包安装前，每次脚本运行执行一个升级阶段。
+# 失败策略：升级失败中止后续安装；dry-run 只打印命令。
+upgrade_pacman_system() {
+  run_root "pacman -Syu --noconfirm"
+}
+
 # 安装包列表。
 # 何时执行：minimal 基础工具、高级组件依赖。
 # 幂等性：直接在函数内按包管理器查询包数据库；已安装或同名命令已存在则跳过。
@@ -451,7 +458,7 @@ ensure_packages() {
       run_root "zypper install -y $pkgstr"
       ;;
     pacman)
-      run_root "pacman -Sy --noconfirm $pkgstr"
+      run_root "pacman -S --needed --noconfirm $pkgstr"
       ;;
     *)
       log "No supported package manager found; skipping package install: $pkgstr"
@@ -460,10 +467,47 @@ ensure_packages() {
   esac
 }
 
+# 统一映射安装列表中的逻辑包名；发行版特例也集中在这里处理。
 pkg_name() {
   local key="$1"
 
   case "$key" in
+    p7zip)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "7zip" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
+    iproute)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "iproute2" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
+    net-snmp-utils)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "net-snmp" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
+    iscsi-initiator-utils)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "open-iscsi" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
+    golang)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "go" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
+    python3-pygments)
+      case "$PKG_MANAGER" in
+        pacman) printf '%s' "python-pygments" ;;
+        *) printf '%s' "$key" ;;
+      esac
+      ;;
     openvswitch)
       case "$PKG_MANAGER" in
         apt) printf '%s' "openvswitch-switch" ;;
@@ -581,7 +625,7 @@ ensure_selinux_disabled() {
 # 幂等性：ensure_packages 会跳过已安装包。
 # 失败策略：个别发行版缺包时记录日志并继续，避免一个可选工具阻塞整机初始化。
 install_basic_tools() {
-  local tools=(git curl wget zsh tmux vim python3-pip fzf ripgrep)
+  local tools=(git curl wget zsh tmux vim fzf ripgrep)
   local tool mapped
 
   for tool in "${tools[@]}"; do
@@ -640,19 +684,13 @@ install_oh_my_zsh() {
 
 # 安装 oh-my-zsh 插件依赖。
 # 何时执行：minimal 阶段，插件 clone 前。
-# 幂等性：包管理器或 pip 会自行处理已安装情况。
+# 幂等性：ensure_packages 会跳过已安装包。
 # 失败策略：pygments 只是部分插件增强依赖，失败不阻断主流程。
 install_oh_my_zsh_plugin_deps() {
-  if [ "$PKG_MANAGER" = "apt" ] && [ "$DISTRO" = "ubuntu" ]; then
-    ensure_packages python3-pygments || log "python3-pygments install failed; continuing"
-    return 0
-  fi
+  local pkg
 
-  if command -v pip3 >/dev/null 2>&1; then
-    run_user "pip3 install --user pygments || true"
-  else
-    log "pip3 unavailable; skipping pygments"
-  fi
+  pkg="$(pkg_name python3-pygments)"
+  ensure_packages "$pkg" || log "$pkg install failed; continuing"
 }
 
 # 安装常用 oh-my-zsh 插件。
@@ -800,7 +838,7 @@ ensure_service_enabled() {
   fi
 
   if ! systemctl is-enabled "${svc}.service" >/dev/null 2>&1; then
-    run_root "systemctl enable --now ${svc}.service || true"
+    run_root "systemctl enable --now ${svc}.service" || log "Failed to enable/start ${svc}.service; continuing"
     return 0
   fi
 
@@ -809,7 +847,7 @@ ensure_service_enabled() {
     return 0
   fi
 
-  run_root "systemctl start ${svc}.service || true"
+  run_root "systemctl start ${svc}.service" || log "Failed to start ${svc}.service; continuing"
 }
 
 configure_docker_group() {
@@ -884,7 +922,7 @@ install_miniconda() {
 # 何时执行：advanced 且 INSTALL_DOCKER=true。
 # 幂等性：docker 命令存在则跳过安装，只尝试启用服务。
 # 失败策略：不同发行版仓库差异较大，安装失败会记录日志并继续。
-# 副作用：RHEL/Fedora 会添加 Docker 官方仓库。
+# 副作用：apt 和 RHEL/Fedora 路径会添加 Docker 官方仓库。
 install_docker() {
   if command -v docker >/dev/null 2>&1; then
     log "Docker already installed"
@@ -944,6 +982,11 @@ install_kubectl() {
     return 0
   fi
 
+  if ! command -v curl >/dev/null 2>&1; then
+    log "curl unavailable; cannot download kubectl"
+    return 1
+  fi
+
   kubectl_ver="$(curl -L -s https://dl.k8s.io/release/stable.txt)"
   if [ -z "$kubectl_ver" ]; then
     log "Failed to resolve latest kubectl version"
@@ -981,6 +1024,10 @@ install_kind() {
       run_user "grep -qxF 'export PATH=\$PATH:\$HOME/go/bin' '$TARGET_HOME/.zshrc' || sed -i -E '/^[[:space:]]*source[[:space:]]+\$ZSH\/oh-my-zsh\.sh[[:space:]]*$/i export PATH=\$PATH:\$HOME/go/bin' '$TARGET_HOME/.zshrc'"
     fi
   else
+    if ! command -v curl >/dev/null 2>&1; then
+      log "curl unavailable; cannot download kind"
+      return 1
+    fi
     kind_ver="$(curl -L -s https://api.github.com/repos/kubernetes-sigs/kind/releases/latest | grep '\"tag_name\":' | sed -E 's/.*\"([^\"]+)\".*/\1/')"
     if [ -z "$kind_ver" ]; then
       log "Failed to resolve latest kind version"
@@ -998,24 +1045,36 @@ install_kind() {
 # 安装 Open vSwitch。
 # 何时执行：advanced 且 INSTALL_OVS=true。
 # 幂等性：ovs-vsctl 存在则跳过安装，只尝试启用服务。
-# 失败策略：包名依赖发行版仓库，安装失败会记录并继续。
+# 失败策略：安装失败返回错误，由 advanced 阶段记录并继续其他组件。
 install_openvswitch() {
   local pkgname
+  local service_name="openvswitch"
+
+  if [ "$PKG_MANAGER" = "pacman" ]; then
+    # Arch 的 ovs-vswitchd.service 会同时启动 ovsdb-server.service。
+    service_name="ovs-vswitchd"
+  fi
 
   if command -v ovs-vsctl >/dev/null 2>&1; then
     log "Open vSwitch already installed"
-    ensure_service_enabled openvswitch
+    ensure_service_enabled "$service_name"
     return 0
   fi
 
   ensure_openvswitch_repos
   pkgname="$(pkg_name openvswitch)"
-  ensure_packages "$pkgname" || log "Open vSwitch package may be unavailable: $pkgname"
-  ensure_service_enabled openvswitch
+  if ! ensure_packages "$pkgname"; then
+    log "Open vSwitch package may be unavailable: $pkgname; skipping service enable"
+    return 1
+  fi
+  ensure_service_enabled "$service_name"
 }
 
 run_minimal_profile() {
   run_stage "Detect distro and package manager" detect_distro_and_pkgmgr
+  if [ "$PKG_MANAGER" = "pacman" ]; then
+    run_stage "Upgrade pacman system before installing packages" upgrade_pacman_system || return 1
+  fi
   run_stage "Ensure RHEL repositories if needed" ensure_rhel_repos
   run_stage "Disable SELinux if present" ensure_selinux_disabled
   run_stage "Install basic tools" install_basic_tools
